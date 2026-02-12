@@ -81,10 +81,12 @@ G2/
 
 | 问题 | 原因 | 解决方案 |
 |------|------|----------|
+| `Could not start 'npx'` | nvm/fnm 用户的 Node.js 路径不在 Gradle daemon 的 PATH 中 | `settings.gradle.kts` 中用 `providers.exec { commandLine("bash", "-lc", "which npx") }` 动态检测路径 |
 | ClassNotFoundException: RNContainerActivity | app 和 rnlib 的 JVM target 不一致（11 vs 17），desugaring 静默丢弃了 rnlib 的类 | 统一 JVM target 为 17 |
 | ReactActivity 构造时 intent 为 null | ReactActivity 在 `onCreate` 之前就调用 `getMainComponentName()` | 使用 `pendingComponentName` 静态变量提前传递组件名 |
 | React 版本不匹配 | `react: ^19.2.3` 解析到 19.2.4，与 RN 0.84.0 内置的 renderer 19.2.3 冲突 | 固定 `react: "19.2.3"`（去掉 `^`） |
 | AGP 9.0 不兼容 RNGP | RN 0.84.0 的 Gradle 插件不支持 AGP 9.0 | 降级 AGP 到 8.7.3，Gradle 到 8.13 |
+| `Unresolved reference 'BuildConfig'` | AGP 8.x 默认不生成 BuildConfig | `app/build.gradle.kts` 中添加 `buildFeatures { buildConfig = true }` |
 
 ---
 
@@ -137,8 +139,14 @@ plugins {
     id("com.facebook.react.settings")
 }
 
+// ⚠️ 关键：nvm/fnm 用户必须动态检测 npx 路径，否则 Gradle daemon 找不到 npx
+val npxPath: String = providers.exec {
+    commandLine("bash", "-lc", "which npx")
+}.standardOutput.asText.get().trim()
+
 extensions.configure<com.facebook.react.ReactSettingsExtension> {
     autolinkLibrariesFromCommand(
+        command = listOf(npxPath, "@react-native-community/cli", "config"),
         workingDirectory = file("rn"),
         lockFiles = files("rn/package-lock.json")
     )
@@ -161,6 +169,12 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+    buildFeatures {
+        buildConfig = true  // RN 需要 BuildConfig.DEBUG
     }
 }
 
@@ -301,3 +315,15 @@ rnlib 作为 library 模块无法承载这些功能。
 ### pendingComponentName 的作用
 
 `ReactActivity` 的父类在构造函数中就会调用 `getMainComponentName()`，此时 `intent` 还是 null。通过静态变量 `pendingComponentName` 在 `startActivity` 之前预设组件名，绕过这个时序问题。
+
+
+
+
+
+做了两件事：
+
+1. 创建了 `scripts/setup-rn.sh` — 一键脚本，在任意 Android 项目根目录执行后会自动创建 `rn/` 目录（含依赖安装）、`rnlib` 模块（含 `RNManager`、`RNContainerActivity`）、打包初始 JS bundle，最后输出剩余需要手动改的 Gradle 配置（这部分因为每个项目的 `settings.gradle.kts` 结构不同，不适合自动修改）。
+
+2. 更新了 `docs/rnlib-integration-guide.md` — 补充了 nvm 的 `npx` 路径检测方案、`buildConfig = true`、`kotlinOptions` 等我们踩过的坑。
+
+如果想进一步简化，可以考虑把 `rnlib` 发布到公司内部 Maven 仓库作为 AAR，这样新项目只需要 `implementation("com.tuwan:rnlib:1.0.0")` 一行依赖，不用复制模块。不过那样 `rnlib` 就需要锁定 RN 版本，灵活性会降低一些。
