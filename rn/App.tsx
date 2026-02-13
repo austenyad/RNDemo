@@ -49,6 +49,12 @@ function App(): React.JSX.Element {
           <Text style={styles.buttonText}>Hello from RN</Text>
         </TouchableOpacity>
 
+
+
+
+        <Text>dian'ji</Text>
+
+
       </ScrollView>
     </SafeAreaView>
   );
